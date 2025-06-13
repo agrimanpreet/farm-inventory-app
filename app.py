@@ -8,7 +8,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+import json
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+    json.loads(st.secrets["credentials"]), scope
+)
 gc = gspread.authorize(credentials)
 
 def get_worksheet(sheet_name):
@@ -153,3 +156,4 @@ elif menu == "Stock Summary":
     st.subheader("💰 Income Summary")
     income_summary = st.session_state.sales.groupby(["Crop", "Variety", "Category"])["Total_Income"].sum().reset_index()
     st.dataframe(income_summary)
+    use secrets instead of credentials.json
