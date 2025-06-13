@@ -10,7 +10,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 import json
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-    json.loads(st.secrets["credentials"]), scope
+    st.secrets["credentials"], scope
 )
 gc = gspread.authorize(credentials)
 
