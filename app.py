@@ -1,164 +1,138 @@
-# farm_inventory_app/app.py
-
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Google Sheets connection
+# Authenticate and connect to Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = Credentials.from_service_account_info(st.secrets["credentials"], scopes=scope)
+credentials = Credentials.from_service_account_info(
+    st.secrets["credentials"], scopes=scope
+)
 client = gspread.authorize(credentials)
 sheet = client.open("Farm Inventory Data")
 
-# Load sheets
-def get_df(tab_name):
-    try:
-        return pd.DataFrame(sheet.worksheet(tab_name).get_all_records())
-    except:
-        return pd.DataFrame()
+# Load all worksheets
+sowing_ws = sheet.worksheet("Sowing")
+harvest_ws = sheet.worksheet("Harvest")
+processing1_ws = sheet.worksheet("Processing1")
+processing2_ws = sheet.worksheet("Processing2")
+sales_ws = sheet.worksheet("Sales")
 
-def append_row(tab_name, row):
-    sheet.worksheet(tab_name).append_row(row)
+# Read data into dataframes
+sowing_df = pd.DataFrame(sowing_ws.get_all_records())
+harvest_df = pd.DataFrame(harvest_ws.get_all_records())
+processing1_df = pd.DataFrame(processing1_ws.get_all_records())
+processing2_df = pd.DataFrame(processing2_ws.get_all_records())
+sales_df = pd.DataFrame(sales_ws.get_all_records())
 
-sowing_df = get_df("Sowing")
-harvest_df = get_df("Harvest")
-processing1_df = get_df("Processing1")
-processing2_df = get_df("Processing2")
-sales_df = get_df("Sales")
+st.title("🌾 Farm Inventory Management")
 
-# Unique crop and variety lists
-def unique_values(df, column):
-    return sorted(df[column].dropna().unique()) if column in df.columns else []
+# Navigation
+menu = ["Sowing", "Harvest", "Processing 1", "Processing 2", "Sales", "Inventory Summary", "Income Summary"]
+tab = st.sidebar.radio("Navigate", menu)
 
-crop_list = unique_values(sowing_df, "Crop")
-variety_list = unique_values(sowing_df, "Variety")
-
-st.title("Farm Inventory Manager")
-
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Sowing", "Harvest", "Processing 1", "Processing 2", "Sales", "Summary"])
-
-with tab1:
-    st.header("Sowing Entry")
+if tab == "Sowing":
+    st.subheader("Add Sowing Record")
     with st.form("sowing_form"):
         field_id = st.text_input("Field ID")
-        crop = st.text_input("Crop (new or existing)")
+        crop = st.text_input("Crop")
         variety = st.text_input("Variety")
-        area = st.number_input("Area (acres)", min_value=0.0, format="%.2f")
+        area = st.number_input("Area (acres)", min_value=0.0)
         date = st.date_input("Sowing Date")
-        submitted = st.form_submit_button("Add Sowing Entry")
-        if submitted:
-            append_row("Sowing", [field_id, crop, variety, area, str(date)])
-            st.success("Sowing record added.")
+        submitted = st.form_submit_button("Submit")
+    if submitted:
+        row = [field_id, crop, variety, area, str(date)]
+        sowing_ws.append_row(row)
+        st.success("Sowing record added!")
 
-with tab2:
-    st.header("Harvest Entry")
+if tab == "Harvest":
+    st.subheader("Add Harvest Record")
     with st.form("harvest_form"):
         date = st.date_input("Harvest Date")
-        crop = st.selectbox("Crop", crop_list)
-        variety = st.selectbox("Variety", variety_list)
-        produce_type = st.text_input("Produce Type (e.g., Seed Cotton, Raw Seed, Grain, etc.)")
-        quantity = st.number_input("Quantity (kg)", min_value=0.0, format="%.2f")
-        submitted = st.form_submit_button("Add Harvest Entry")
-        if submitted:
-            append_row("Harvest", [str(date), crop, variety, produce_type, quantity])
-            st.success("Harvest entry added.")
+        crop = st.selectbox("Crop", sowing_df["Crop"].unique())
+        variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique())
+        produce_type = st.text_input("Produce Type")
+        qty = st.number_input("Quantity (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Submit")
+    if submitted:
+        row = [str(date), crop, variety, produce_type, qty]
+        harvest_ws.append_row(row)
+        st.success("Harvest record added!")
 
-with tab3:
-    st.header("Processing Stage 1: Seed Cotton ➜ Lint + Raw Seed")
-    with st.form("processing1_form"):
-        crop = st.selectbox("Crop", crop_list, key="p1crop")
-        variety = st.selectbox("Variety", variety_list, key="p1variety")
-        seed_cotton_input = st.number_input("Input Seed Cotton (kg)", min_value=0.0, format="%.2f")
-
-        total_available = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Seed Cotton'")["Quantity"].sum()
-        used_so_far = processing1_df.query("Crop == @crop and Variety == @variety")["Seed_Cotton_Input"].sum()
-        remaining = total_available - used_so_far
-        st.info(f"Available Seed Cotton: {remaining:.2f} kg")
-
-        if seed_cotton_input > remaining:
-            st.error("Input exceeds available Seed Cotton")
+if tab == "Processing 1":
+    st.subheader("Processing: Seed Cotton → Lint + Raw Seed")
+    with st.form("proc1_form"):
+        crop = st.selectbox("Crop", harvest_df["Crop"].unique())
+        variety = st.selectbox("Variety", harvest_df[harvest_df["Crop"] == crop]["Variety"].unique())
+        seed_cotton_qty = st.number_input("Seed Cotton Input (kg)", min_value=0.0)
+        lint_qty = st.number_input("Lint Output (kg)", min_value=0.0)
+        raw_seed_qty = st.number_input("Raw Seed Output (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Submit")
+    if submitted:
+        available = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Seed Cotton'")["Quantity"].sum()
+        used = processing1_df.query("Crop == @crop and Variety == @variety")["Seed_Cotton_Input"].sum()
+        remaining = available - used
+        if seed_cotton_qty > remaining:
+            st.error(f"Only {remaining:.2f} kg Seed Cotton available.")
         else:
-            lint_output = st.number_input("Lint Quantity (kg)", min_value=0.0, format="%.2f")
-            raw_seed_output = st.number_input("Raw Seed Quantity (kg)", min_value=0.0, format="%.2f")
-            submitted = st.form_submit_button("Add Processing 1 Entry")
-            if submitted:
-                append_row("Processing1", [crop, variety, seed_cotton_input, lint_output, raw_seed_output])
-                st.success("Processing Stage 1 entry added.")
+            row = [crop, variety, seed_cotton_qty, lint_qty, raw_seed_qty]
+            processing1_ws.append_row(row)
+            st.success("Processing 1 record added!")
 
-with tab4:
-    st.header("Processing Stage 2: Raw Seed ➜ Graded + Undersize")
-    with st.form("processing2_form"):
-        crop = st.selectbox("Crop", crop_list, key="p2crop")
-        variety = st.selectbox("Variety", variety_list, key="p2variety")
-        raw_seed_input = st.number_input("Input Raw Seed (kg)", min_value=0.0, format="%.2f")
-
-        from_harvest = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Raw Seed'")["Quantity"].sum()
-        from_processing1 = processing1_df.query("Crop == @crop and Variety == @variety")["Raw_Seed_Output"].sum()
-        used_in_processing2 = processing2_df.query("Crop == @crop and Variety == @variety")["Raw_Seed_Input"].sum()
-        total_available_raw_seed = from_harvest + from_processing1 - used_in_processing2
-
-        st.info(f"Available Raw Seed: {total_available_raw_seed:.2f} kg")
-
-        if raw_seed_input > total_available_raw_seed:
-            st.error("Input exceeds available Raw Seed")
+if tab == "Processing 2":
+    st.subheader("Processing: Raw Seed → Graded + Undersize")
+    with st.form("proc2_form"):
+        crop = st.selectbox("Crop", harvest_df["Crop"].unique())
+        variety = st.selectbox("Variety", harvest_df[harvest_df["Crop"] == crop]["Variety"].unique())
+        raw_seed_input = st.number_input("Raw Seed Input (kg)", min_value=0.0)
+        graded = st.number_input("Graded Seed (kg)", min_value=0.0)
+        undersize = st.number_input("Undersize (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Submit")
+    if submitted:
+        harvested_raw = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Raw Seed'")["Quantity"].sum()
+        from_proc1 = processing1_df.query("Crop == @crop and Variety == @variety")["Raw_Seed_Output"].sum()
+        total_raw = harvested_raw + from_proc1
+        used = processing2_df.query("Crop == @crop and Variety == @variety")["Raw_Seed_Input"].sum()
+        remaining = total_raw - used
+        if raw_seed_input > remaining:
+            st.error(f"Only {remaining:.2f} kg Raw Seed available.")
         else:
-            graded_output = st.number_input("Graded Seed Quantity (kg)", min_value=0.0, format="%.2f")
-            undersize_output = st.number_input("Undersize Quantity (kg)", min_value=0.0, format="%.2f")
-            submitted = st.form_submit_button("Add Processing 2 Entry")
-            if submitted:
-                append_row("Processing2", [crop, variety, raw_seed_input, graded_output, undersize_output])
-                st.success("Processing Stage 2 entry added.")
+            row = [crop, variety, raw_seed_input, graded, undersize]
+            processing2_ws.append_row(row)
+            st.success("Processing 2 record added!")
 
-with tab5:
-    st.header("Sales Entry")
+if tab == "Sales":
+    st.subheader("Add Sales Record")
     with st.form("sales_form"):
         date = st.date_input("Sale Date")
-        crop = st.selectbox("Crop", crop_list, key="salescrop")
-        variety = st.selectbox("Variety", variety_list, key="salesvariety")
-        item_type = st.selectbox("Item Type", ["Seed Cotton", "Lint", "Raw Seed", "Graded Seed", "Undersize", "Grain"])
-        quantity = st.number_input("Quantity Sold (kg)", min_value=0.0, format="%.2f")
-        price_per_kg = st.number_input("Price per kg (₹)", min_value=0.0, format="%.2f")
-        submitted = st.form_submit_button("Add Sale Entry")
-        if submitted:
-            income = quantity * price_per_kg
-            append_row("Sales", [str(date), crop, variety, item_type, quantity, price_per_kg, income])
-            st.success("Sale entry added.")
+        crop = st.selectbox("Crop", sowing_df["Crop"].unique())
+        variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique())
+        product = st.selectbox("Product", ["Graded Seed", "Undersize", "Grain", "Lint"])
+        qty = st.number_input("Quantity Sold (kg)", min_value=0.0)
+        rate = st.number_input("Rate (₹/kg)", min_value=0.0)
+        submitted = st.form_submit_button("Submit")
+    if submitted:
+        row = [str(date), crop, variety, product, qty, rate, qty * rate]
+        sales_ws.append_row(row)
+        st.success("Sales record added!")
 
-with tab6:
-    st.header("Inventory and Income Summary")
+if tab == "Inventory Summary":
+    st.subheader("Inventory Summary")
+    inv1 = harvest_df.groupby(["Crop", "Variety", "Produce_Type"])["Quantity"].sum().reset_index()
+    inv1 = inv1.rename(columns={"Quantity": "Total Harvested"})
+    inv2 = processing1_df.groupby(["Crop", "Variety"])["Seed_Cotton_Input"].sum().reset_index()
+    inv3 = processing2_df.groupby(["Crop", "Variety"])["Raw_Seed_Input"].sum().reset_index()
+    st.write("### Harvested Stock")
+    st.dataframe(inv1)
+    st.write("### Processing 1 Input")
+    st.dataframe(inv2)
+    st.write("### Processing 2 Input")
+    st.dataframe(inv3)
 
-    inventory = {}
-    for tab in ["Harvest", "Processing1", "Processing2"]:
-        df = get_df(tab)
-        for _, row in df.iterrows():
-            key = (row.get("Crop"), row.get("Variety"))
-            if key not in inventory:
-                inventory[key] = {"Seed Cotton": 0, "Lint": 0, "Raw Seed": 0, "Graded Seed": 0, "Undersize": 0}
-
-    for _, row in harvest_df.iterrows():
-        key = (row["Crop"], row["Variety"])
-        inventory[key][row["Produce_Type"]] += row["Quantity"]
-
-    for _, row in processing1_df.iterrows():
-        key = (row["Crop"], row["Variety"])
-        inventory[key]["Seed Cotton"] -= row["Seed_Cotton_Input"]
-        inventory[key]["Lint"] += row["Lint_Output"]
-        inventory[key]["Raw Seed"] += row["Raw_Seed_Output"]
-
-    for _, row in processing2_df.iterrows():
-        key = (row["Crop"], row["Variety"])
-        inventory[key]["Raw Seed"] -= row["Raw_Seed_Input"]
-        inventory[key]["Graded Seed"] += row["Graded_Seed_Output"]
-        inventory[key]["Undersize"] += row["Undersize_Output"]
-
-    for _, row in sales_df.iterrows():
-        key = (row["Crop"], row["Variety"])
-        inventory[key][row["Item_Type"]] -= row["Quantity"]
-
-    st.subheader("Stock Inventory")
-    st.dataframe(pd.DataFrame.from_dict(inventory, orient="index").fillna(0))
-
-    st.subheader("Total Income")
-    total_income = sales_df["Income"].sum() if "Income" in sales_df else 0
-    st.metric(label="Total Income (₹)", value=f"₹{total_income:,.2f}")
+if tab == "Income Summary":
+    st.subheader("Income Summary")
+    if not sales_df.empty:
+        summary = sales_df.groupby(["Crop", "Variety", "Product"])["Total Income"].sum().reset_index()
+        st.dataframe(summary)
+    else:
+        st.info("No sales data found.")
