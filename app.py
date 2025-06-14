@@ -1,158 +1,110 @@
-# Streamlit-based Web App for Farm Inventory Management (Connected Tabs + Google Sheets)
-
 import streamlit as st
 import pandas as pd
-import uuid
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+from datetime import datetime
 
-# --- Google Sheets Setup ---
+# Set up Google Sheets credentials
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-    st.secrets["credentials"], scope
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["credentials"], scopes=scope
 )
-gc = gspread.authorize(credentials)
+client = gspread.authorize(credentials)
 
-def get_worksheet(sheet_name):
-    sh = gc.open("Farm Inventory Data")  # Must already exist in your Google Drive
-    return sh.worksheet(sheet_name)
+# Open your Google Sheet
+sheet = client.open("Farm Inventory")
 
-# --- App Initialization ---
-def init_data():
-    if "sowing" not in st.session_state:
-        st.session_state.sowing = pd.DataFrame(columns=["Sowing_ID", "Date", "Crop", "Variety", "Field_ID", "Area_ha"])
-    if "harvest" not in st.session_state:
-        st.session_state.harvest = pd.DataFrame(columns=["Harvest_ID", "Sowing_ID", "Date", "Crop", "Variety", "Field_ID", "Harvested_kg"])
-    if "processing1" not in st.session_state:
-        st.session_state.processing1 = pd.DataFrame(columns=["Processing_ID", "Harvest_ID", "Date", "Crop", "Variety", "Field_ID", "Input_kg", "Output_Lint_kg", "Output_Raw_Seed_kg"])
-    if "processing2" not in st.session_state:
-        st.session_state.processing2 = pd.DataFrame(columns=["Processing_ID", "Processing1_ID", "Date", "Crop", "Variety", "Field_ID", "Input_kg", "Output_Graded_kg", "Output_Undersize_kg"])
-    if "sales" not in st.session_state:
-        st.session_state.sales = pd.DataFrame(columns=["Sale_ID", "Date", "Crop", "Variety", "Category", "Quantity_Sold_kg", "Price_per_kg", "Total_Income"])
+# Helper function to update sheet
+def append_row(sheet_name, row):
+    worksheet = sheet.worksheet(sheet_name)
+    worksheet.append_row(row)
 
-init_data()
+st.title("🌾 Farm Inventory Management")
 
-st.title("🌾 Farm Inventory Management System")
+menu = ["Sowing", "Harvest", "Processing 1", "Processing 2", "Sales", "Summary"]
+choice = st.sidebar.selectbox("Select Operation", menu)
 
-menu = st.sidebar.selectbox("Menu", ["Sowing", "Harvest", "Processing", "Sales", "Stock Summary"])
-
-if menu == "Sowing":
-    st.header("Add New Sowing Record")
+if choice == "Sowing":
+    st.subheader("🌱 Add Sowing Record")
     with st.form("sowing_form"):
-        date = st.date_input("Sowing Date")
-        crop = st.text_input("Crop")
+        sowing_id = st.text_input("Sowing ID")
+        date = st.date_input("Sowing Date", value=datetime.today())
+        crop = st.selectbox("Crop", ["Cotton", "Wheat", "Mustard"])
         variety = st.text_input("Variety")
+        area = st.number_input("Area (acres)", min_value=0.0)
         field_id = st.text_input("Field ID")
-        area = st.number_input("Area (ha)", min_value=0.0)
-        submitted = st.form_submit_button("Add Sowing")
-        if submitted:
-            sow_id = str(uuid.uuid4())
-            new_row = [sow_id, date, crop, variety, field_id, area]
-            st.session_state.sowing.loc[len(st.session_state.sowing)] = new_row
-            get_worksheet("Sowing").append_row([str(i) for i in new_row])
-            st.success("Sowing record added and saved to Google Sheet.")
-    st.dataframe(st.session_state.sowing)
+        submitted = st.form_submit_button("Add Record")
 
-elif menu == "Harvest":
-    st.header("Add Harvest Record")
+        if submitted:
+            row = [sowing_id, str(date), crop, variety, area, field_id]
+            append_row("Sowing", row)
+            st.success("✅ Sowing record added!")
+
+elif choice == "Harvest":
+    st.subheader("🌾 Add Harvest Record")
     with st.form("harvest_form"):
-        sowing_ids = st.session_state.sowing["Sowing_ID"].tolist()
-        selected = st.selectbox("Select Sowing ID", sowing_ids)
-        harvest_date = st.date_input("Harvest Date")
-        harvested_kg = st.number_input("Harvested Quantity (kg)", min_value=0.0)
-        submitted = st.form_submit_button("Add Harvest")
+        sowing_id = st.text_input("Sowing ID (from sowing tab)")
+        date = st.date_input("Harvest Date", value=datetime.today())
+        produce_type = st.selectbox("Produce Type", ["Seed Cotton", "Wheat Grain", "Mustard Seed"])
+        quantity = st.number_input("Quantity (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Add Record")
+
         if submitted:
-            sow_row = st.session_state.sowing[st.session_state.sowing["Sowing_ID"] == selected].iloc[0]
-            h_id = str(uuid.uuid4())
-            new_row = [h_id, selected, harvest_date, sow_row.Crop, sow_row.Variety, sow_row.Field_ID, harvested_kg]
-            st.session_state.harvest.loc[len(st.session_state.harvest)] = new_row
-            get_worksheet("Harvest").append_row([str(i) for i in new_row])
-            st.success("Harvest record added and saved to Google Sheet.")
-    st.dataframe(st.session_state.harvest)
+            row = [sowing_id, str(date), produce_type, quantity]
+            append_row("Harvest", row)
+            st.success("✅ Harvest record added!")
 
-elif menu == "Processing":
-    st.header("Processing")
-    tab1, tab2 = st.tabs(["Seed Cotton → Lint + Raw Seed", "Raw Seed → Graded + Undersize"])
+elif choice == "Processing 1":
+    st.subheader("🏗️ Processing - Stage 1 (e.g., Seed Cotton ➜ Lint + Raw Seed)")
+    with st.form("processing1_form"):
+        harvest_id = st.text_input("Harvest Batch ID")
+        input_type = st.text_input("Input Produce Type")
+        output_1 = st.text_input("Output 1 Type")
+        qty_1 = st.number_input("Quantity Output 1 (kg)", min_value=0.0)
+        output_2 = st.text_input("Output 2 Type")
+        qty_2 = st.number_input("Quantity Output 2 (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Add Record")
 
-    with tab1:
-        with st.form("proc1_form"):
-            harvest_ids = st.session_state.harvest["Harvest_ID"].tolist()
-            selected = st.selectbox("Select Harvest ID", harvest_ids)
-            date = st.date_input("Processing Date")
-            input_kg = st.number_input("Seed Cotton Input (kg)", min_value=0.0)
-            lint = st.number_input("Output Lint (kg)", min_value=0.0)
-            raw_seed = st.number_input("Output Raw Seed (kg)", min_value=0.0)
-            submitted = st.form_submit_button("Add Ginning Record")
-            if submitted:
-                h_row = st.session_state.harvest[st.session_state.harvest["Harvest_ID"] == selected].iloc[0]
-                pid = str(uuid.uuid4())
-                new_row = [pid, selected, date, h_row.Crop, h_row.Variety, h_row.Field_ID, input_kg, lint, raw_seed]
-                st.session_state.processing1.loc[len(st.session_state.processing1)] = new_row
-                get_worksheet("Processing1").append_row([str(i) for i in new_row])
-                st.success("Ginning record added and saved to Google Sheet.")
-        st.dataframe(st.session_state.processing1)
+        if submitted:
+            row = [harvest_id, input_type, output_1, qty_1, output_2, qty_2]
+            append_row("Processing1", row)
+            st.success("✅ Processing Stage 1 record added!")
 
-    with tab2:
-        with st.form("proc2_form"):
-            proc1_ids = st.session_state.processing1["Processing_ID"].tolist()
-            selected = st.selectbox("Select Processing ID (Raw Seed)", proc1_ids)
-            date = st.date_input("Processing Date")
-            input_kg = st.number_input("Raw Seed Input (kg)", min_value=0.0)
-            graded = st.number_input("Output Graded Seed (kg)", min_value=0.0)
-            undersize = st.number_input("Output Undersize (kg)", min_value=0.0)
-            submitted = st.form_submit_button("Add Grading Record")
-            if submitted:
-                p1_row = st.session_state.processing1[st.session_state.processing1["Processing_ID"] == selected].iloc[0]
-                pid = str(uuid.uuid4())
-                new_row = [pid, selected, date, p1_row.Crop, p1_row.Variety, p1_row.Field_ID, input_kg, graded, undersize]
-                st.session_state.processing2.loc[len(st.session_state.processing2)] = new_row
-                get_worksheet("Processing2").append_row([str(i) for i in new_row])
-                st.success("Grading record added and saved to Google Sheet.")
-        st.dataframe(st.session_state.processing2)
+elif choice == "Processing 2":
+    st.subheader("🔬 Processing - Stage 2 (e.g., Raw Seed ➜ Graded + Undersize)")
+    with st.form("processing2_form"):
+        batch_id = st.text_input("Input Batch ID")
+        input_type = st.text_input("Input Type")
+        graded_qty = st.number_input("Graded Seed Quantity (kg)", min_value=0.0)
+        undersize_qty = st.number_input("Undersize Quantity (kg)", min_value=0.0)
+        submitted = st.form_submit_button("Add Record")
 
-elif menu == "Sales":
-    st.header("Add Sale Record")
-    with st.form("sale_form"):
-        date = st.date_input("Sale Date")
-        crop = st.text_input("Crop")
-        variety = st.text_input("Variety")
-        category = st.selectbox("Category", ["Seed Cotton", "Lint", "Raw Seed", "Graded Seed", "Undersize"])
-        qty = st.number_input("Quantity Sold (kg)", min_value=0.0)
+        if submitted:
+            row = [batch_id, input_type, graded_qty, undersize_qty]
+            append_row("Processing2", row)
+            st.success("✅ Processing Stage 2 record added!")
+
+elif choice == "Sales":
+    st.subheader("💰 Record Sales")
+    with st.form("sales_form"):
+        item = st.text_input("Item Sold")
+        date = st.date_input("Date of Sale", value=datetime.today())
+        quantity = st.number_input("Quantity Sold (kg)", min_value=0.0)
         price = st.number_input("Price per kg (₹)", min_value=0.0)
-        income = qty * price
-        submitted = st.form_submit_button("Add Sale")
+        income = quantity * price
+        submitted = st.form_submit_button("Record Sale")
+
         if submitted:
-            sale_id = str(uuid.uuid4())
-            new_row = [sale_id, date, crop, variety, category, qty, price, income]
-            st.session_state.sales.loc[len(st.session_state.sales)] = new_row
-            get_worksheet("Sales").append_row([str(i) for i in new_row])
-            st.success(f"Sale recorded. Income: ₹{income}. Saved to Google Sheet.")
-    st.dataframe(st.session_state.sales)
+            row = [item, str(date), quantity, price, income]
+            append_row("Sales", row)
+            st.success(f"✅ Sale recorded! Income: ₹{income:.2f}")
 
-elif menu == "Stock Summary":
-    st.header("📦 Stock Summary")
-    stock = {}
-    for _, row in st.session_state.processing1.iterrows():
-        key1 = (row["Crop"], row["Variety"], "Lint")
-        key2 = (row["Crop"], row["Variety"], "Raw Seed")
-        stock[key1] = stock.get(key1, 0) + row["Output_Lint_kg"]
-        stock[key2] = stock.get(key2, 0) + row["Output_Raw_Seed_kg"]
-
-    for _, row in st.session_state.processing2.iterrows():
-        key1 = (row["Crop"], row["Variety"], "Graded Seed")
-        key2 = (row["Crop"], row["Variety"], "Undersize")
-        stock[key1] = stock.get(key1, 0) + row["Output_Graded_kg"]
-        stock[key2] = stock.get(key2, 0) + row["Output_Undersize_kg"]
-
-    for _, row in st.session_state.sales.iterrows():
-        key = (row["Crop"], row["Variety"], row["Category"])
-        stock[key] = stock.get(key, 0) - row["Quantity_Sold_kg"]
-
-    summary = pd.DataFrame([{"Crop": k[0], "Variety": k[1], "Category": k[2], "Remaining Stock (kg)": v} for k, v in stock.items()])
-    st.dataframe(summary)
-
-    st.markdown("---")
-    st.subheader("💰 Income Summary")
-    income_summary = st.session_state.sales.groupby(["Crop", "Variety", "Category"])["Total_Income"].sum().reset_index()
-    st.dataframe(income_summary)
+elif choice == "Summary":
+    st.subheader("📊 Inventory & Income Summary")
+    sales_df = pd.DataFrame(sheet.worksheet("Sales").get_all_records())
+    if not sales_df.empty:
+        total_income = sales_df["income"].sum()
+        st.metric("💰 Total Income (₹)", f"₹{total_income:,.2f}")
+        st.dataframe(sales_df)
+    else:
+        st.info("No sales data available.")
