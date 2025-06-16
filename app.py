@@ -1,179 +1,151 @@
-# farm_inventory_app/app.py
 import streamlit as st
 import pandas as pd
+import json
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Google Sheets API setup
+# Authenticate and connect to Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = Credentials.from_service_account_info(st.secrets["credentials"], scopes=scope)
+credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
 client = gspread.authorize(credentials)
 
-# Open the spreadsheet
 sheet = client.open("Farm Inventory Data")
 
-def load_sheet(sheet_name):
+# Utility functions
+def load_sheet(name):
     try:
-        df = pd.DataFrame(sheet.worksheet(sheet_name).get_all_records())
-        df.columns = df.columns.str.strip()
+        data = sheet.worksheet(name).get_all_records()
+        df = pd.DataFrame(data)
+        df.columns = df.columns.str.strip().str.title()
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Failed to load {name} sheet: {e}")
         return pd.DataFrame()
 
-def save_to_sheet(sheet_name, new_data):
-    worksheet = sheet.worksheet(sheet_name)
-    existing_data = worksheet.get_all_records()
-    existing_df = pd.DataFrame(existing_data)
-    
-    new_df = pd.DataFrame([new_data])
-    updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+def save_to_sheet(sheet_name, data):
+    try:
+        worksheet = sheet.worksheet(sheet_name)
+        worksheet.clear()
+        worksheet.update([data.columns.tolist()] + data.values.tolist())
+    except Exception as e:
+        st.error(f"Failed to save to {sheet_name}: {e}")
 
-    # 🔥 Clean and convert everything to safe string format
-    updated_df = updated_df.fillna("").astype(str)
-
-    worksheet.update([updated_df.columns.values.tolist()] + updated_df.values.tolist())
+# Load all sheets
+sowing_df = load_sheet("Sowing")
+harvest_df = load_sheet("Harvest")
+processing1_df = load_sheet("Processing1")
+processing2_df = load_sheet("Processing2")
+sales_df = load_sheet("Sales")
 
 # Tabs
-st.set_page_config(layout="wide")
-tabs = st.tabs(["Sowing", "Harvest", "Processing 1", "Processing 2", "Sales", "Inventory Summary"])
+st.title("Farm Inventory Management")
+tab = st.sidebar.radio("Go to", ["Sowing", "Harvest", "Processing 1", "Processing 2", "Sales", "Inventory Summary"])
 
-# --- SOWING TAB ---
-sowing_df = load_sheet("Sowing")
-with tabs[0]:
+if tab == "Sowing":
     st.header("Sowing Entry")
-    with st.form("sowing_form"):
-        field_id = st.text_input("Field ID")
-        crop = st.text_input("Crop")
-        variety = st.text_input("Variety")
-        area = st.number_input("Area (acres)", min_value=0.0, step=0.1)
-        sowing_date = st.date_input("Sowing Date")
-        submit = st.form_submit_button("Submit")
-    if submit:
-        sowing_data = {
-            "Field_ID": field_id,
-            "Crop": crop,
-            "Variety": variety,
-            "Area": area,
-            "Sowing_Date": sowing_date.strftime("%Y-%m-%d")
-        }
-        save_to_sheet("Sowing", sowing_data)
-        st.success("Sowing data saved successfully!")
+    field_id = st.text_input("Field ID")
+    crop = st.text_input("Crop")
+    variety = st.text_input("Variety")
+    area = st.number_input("Area (acres)", min_value=0.0)
+    sowing_date = st.date_input("Sowing Date")
 
-# --- HARVEST TAB ---
-harvest_df = load_sheet("Harvest")
-with tabs[1]:
+    if st.button("Add Sowing Record"):
+        new_entry = pd.DataFrame([{"Field ID": field_id, "Crop": crop, "Variety": variety, "Area": area, "Sowing Date": str(sowing_date)}])
+        updated_df = pd.concat([sowing_df, new_entry], ignore_index=True)
+        save_to_sheet("Sowing", updated_df)
+        st.success("Sowing record added successfully.")
+
+elif tab == "Harvest":
     st.header("Harvest Entry")
-    crop_options = sowing_df["Crop"].unique().tolist()
+    crop_options = sowing_df["Crop"].unique() if not sowing_df.empty else []
     crop = st.selectbox("Crop", crop_options)
-    variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique())
-    with st.form("harvest_form"):
-        harvest_date = st.date_input("Harvest Date")
-        produce_type = st.text_input("Produce Type (e.g., Seed Cotton, Raw Seed, Grain, etc.)")
-        quantity = st.number_input("Quantity (kg)", min_value=0.0, step=1.0)
-        submit = st.form_submit_button("Submit")
-    if submit:
-        harvest_data = {
-            "Crop": crop,
-            "Variety": variety,
-            "Harvest_Date": harvest_date.strftime("%Y-%m-%d"),
-            "Produce_Type": produce_type,
-            "Quantity": quantity
-        }
-        save_to_sheet("Harvest", harvest_data)
-        st.success("Harvest data saved successfully!")
 
-# --- PROCESSING 1 TAB ---
-data_p1 = load_sheet("Processing1")
-with tabs[2]:
-    st.header("Processing 1: Seed Cotton to Lint + Raw Seed")
+    variety_options = sowing_df[sowing_df["Crop"] == crop]["Variety"].unique() if crop else []
+    variety = st.selectbox("Variety", variety_options)
+
+    produce_type = st.text_input("Produce Type (e.g., Seed Cotton, Grain, Raw Seed)")
+    quantity = st.number_input("Quantity (kg)", min_value=0.0)
+    harvest_date = st.date_input("Harvest Date")
+
+    if st.button("Add Harvest Record"):
+        new_entry = pd.DataFrame([{"Crop": crop, "Variety": variety, "Produce Type": produce_type, "Quantity": quantity, "Harvest Date": str(harvest_date)}])
+        updated_df = pd.concat([harvest_df, new_entry], ignore_index=True)
+        save_to_sheet("Harvest", updated_df)
+        st.success("Harvest record added successfully.")
+
+elif tab == "Processing 1":
+    st.header("Processing 1: Seed Cotton Processing")
     crop = st.selectbox("Crop", harvest_df["Crop"].unique())
     variety = st.selectbox("Variety", harvest_df[harvest_df["Crop"] == crop]["Variety"].unique())
-    total_available = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Seed Cotton'")["Quantity"].sum()
-    processed = data_p1.query("Crop == @crop and Variety == @variety")
-    already_processed = processed["Seed_Cotton_Quantity"].sum() if not processed.empty else 0
-    remaining = total_available - already_processed
-    st.info(f"Total available seed cotton: {total_available} kg | Already processed: {already_processed} kg | Remaining: {remaining} kg")
 
-    with st.form("proc1_form"):
-        seed_cotton_qty = st.number_input("Seed Cotton Quantity (kg)", min_value=0.0, max_value=remaining, step=1.0)
-        lint_qty = st.number_input("Lint Quantity (kg)", min_value=0.0, max_value=seed_cotton_qty, step=1.0)
-        raw_seed_qty = seed_cotton_qty - lint_qty
-        st.write(f"Calculated Raw Seed Quantity: {raw_seed_qty:.2f} kg")
-        submit = st.form_submit_button("Submit")
-    if submit:
-        data = {
-            "Crop": crop,
-            "Variety": variety,
-            "Seed_Cotton_Quantity": seed_cotton_qty,
-            "Lint_Quantity": lint_qty,
-            "Raw_Seed_Quantity": raw_seed_qty
-        }
-        save_to_sheet("Processing1", data)
-        st.success("Processing 1 data saved successfully!")
+    total_available = harvest_df.query("Crop == @crop and Variety == @variety and `Produce Type` == 'Seed Cotton'")["Quantity"].sum()
+    processed = processing1_df.query("Crop == @crop and Variety == @variety")["Seed Cotton Quantity"].sum()
+    available = total_available - processed
 
-# --- PROCESSING 2 TAB ---
-data_p2 = load_sheet("Processing2")
-with tabs[3]:
-    st.header("Processing 2: Raw Seed to Graded + Undersized")
-    crop = st.selectbox("Crop", harvest_df["Crop"].unique(), key="p2")
-    variety = st.selectbox("Variety", harvest_df[harvest_df["Crop"] == crop]["Variety"].unique(), key="v2")
-    raw_from_harvest = harvest_df.query("Crop == @crop and Variety == @variety and Produce_Type == 'Raw Seed'")["Quantity"].sum()
-    raw_from_proc1 = data_p1.query("Crop == @crop and Variety == @variety")["Raw_Seed_Quantity"].sum()
-    total_raw = raw_from_harvest + raw_from_proc1
-    used_raw = data_p2.query("Crop == @crop and Variety == @variety")["Raw_Seed_Used"].sum()
-    remaining_raw = total_raw - used_raw
-    st.info(f"Total Raw Seed: {total_raw} kg | Already Used: {used_raw} kg | Remaining: {remaining_raw} kg")
+    st.info(f"Available Seed Cotton: {available:.2f} kg")
+    input_qty = st.number_input("Seed Cotton Quantity (kg)", min_value=0.0, max_value=available)
 
-    with st.form("proc2_form"):
-        raw_used = st.number_input("Raw Seed Used (kg)", min_value=0.0, max_value=remaining_raw, step=1.0)
-        graded_seed = st.number_input("Graded Seed (kg)", min_value=0.0, max_value=raw_used, step=1.0)
-        undersize = raw_used - graded_seed
-        st.write(f"Calculated Undersize Seed: {undersize:.2f} kg")
-        submit = st.form_submit_button("Submit")
-    if submit:
-        data = {
-            "Crop": crop,
-            "Variety": variety,
-            "Raw_Seed_Used": raw_used,
-            "Graded_Seed": graded_seed,
-            "Undersize": undersize
-        }
-        save_to_sheet("Processing2", data)
-        st.success("Processing 2 data saved successfully!")
+    lint_qty = st.number_input("Lint Quantity (kg)", min_value=0.0, max_value=input_qty)
+    raw_seed_qty = input_qty - lint_qty
+    st.write(f"Raw Seed Quantity auto-calculated: {raw_seed_qty:.2f} kg")
 
-# --- SALES TAB ---
-sales_df = load_sheet("Sales")
-with tabs[4]:
+    if st.button("Submit Processing 1"):
+        new_entry = pd.DataFrame([{"Crop": crop, "Variety": variety, "Seed Cotton Quantity": input_qty, "Lint Quantity": lint_qty, "Raw Seed Quantity": raw_seed_qty}])
+        updated_df = pd.concat([processing1_df, new_entry], ignore_index=True)
+        save_to_sheet("Processing1", updated_df)
+        st.success("Processing 1 record added successfully.")
+
+elif tab == "Processing 2":
+    st.header("Processing 2: Raw Seed Processing")
+    crop = st.selectbox("Crop", sowing_df["Crop"].unique())
+    variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique())
+
+    harvest_raw = harvest_df.query("Crop == @crop and Variety == @variety and `Produce Type` == 'Raw Seed'")["Quantity"].sum()
+    from_processing1 = processing1_df.query("Crop == @crop and Variety == @variety")["Raw Seed Quantity"].sum()
+    total_raw_seed = harvest_raw + from_processing1
+    used = processing2_df.query("Crop == @crop and Variety == @variety")["Raw Seed Quantity"].sum()
+    available = total_raw_seed - used
+
+    st.info(f"Available Raw Seed: {available:.2f} kg")
+    input_qty = st.number_input("Raw Seed Quantity (kg)", min_value=0.0, max_value=available)
+
+    graded_qty = st.number_input("Graded Seed Quantity (kg)", min_value=0.0, max_value=input_qty)
+    undersize_qty = input_qty - graded_qty
+    st.write(f"Undersize Quantity auto-calculated: {undersize_qty:.2f} kg")
+
+    if st.button("Submit Processing 2"):
+        new_entry = pd.DataFrame([{"Crop": crop, "Variety": variety, "Raw Seed Quantity": input_qty, "Graded Seed Quantity": graded_qty, "Undersize Quantity": undersize_qty}])
+        updated_df = pd.concat([processing2_df, new_entry], ignore_index=True)
+        save_to_sheet("Processing2", updated_df)
+        st.success("Processing 2 record added successfully.")
+
+elif tab == "Sales":
     st.header("Sales Entry")
-    crop = st.selectbox("Crop", sowing_df["Crop"].unique(), key="sales")
-    variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique(), key="sales2")
-    with st.form("sales_form"):
-        product_type = st.text_input("Product Type (e.g., Lint, Graded Seed, etc.)")
-        quantity = st.number_input("Quantity Sold (kg)", min_value=0.0, step=1.0)
-        price = st.number_input("Price per kg", min_value=0.0, step=1.0)
-        income = quantity * price
-        st.write(f"Calculated Income: ₹{income:.2f}")
-        submit = st.form_submit_button("Submit")
-    if submit:
-        data = {
-            "Crop": crop,
-            "Variety": variety,
-            "Product_Type": product_type,
-            "Quantity": quantity,
-            "Price_per_kg": price,
-            "Income": income
-        }
-        save_to_sheet("Sales", data)
-        st.success("Sales data saved successfully!")
+    crop = st.selectbox("Crop", sowing_df["Crop"].unique())
+    variety = st.selectbox("Variety", sowing_df[sowing_df["Crop"] == crop]["Variety"].unique())
+    produce_type = st.text_input("Produce Type")
+    quantity = st.number_input("Quantity Sold (kg)", min_value=0.0)
+    amount = st.number_input("Sale Amount (Rs)", min_value=0.0)
+    sale_date = st.date_input("Sale Date")
 
-# --- INVENTORY SUMMARY ---
-with tabs[5]:
+    if st.button("Submit Sale"):
+        new_entry = pd.DataFrame([{"Crop": crop, "Variety": variety, "Produce Type": produce_type, "Quantity": quantity, "Amount": amount, "Sale Date": str(sale_date)}])
+        updated_df = pd.concat([sales_df, new_entry], ignore_index=True)
+        save_to_sheet("Sales", updated_df)
+        st.success("Sale record added successfully.")
+
+elif tab == "Inventory Summary":
     st.header("Inventory Summary")
-    st.subheader("Raw and Processed Stock")
-    st.dataframe(harvest_df.groupby(["Crop", "Variety", "Produce_Type"]).sum(numeric_only=True).reset_index())
-    st.subheader("Processing 1 Summary")
-    st.dataframe(data_p1.groupby(["Crop", "Variety"]).sum(numeric_only=True).reset_index())
-    st.subheader("Processing 2 Summary")
-    st.dataframe(data_p2.groupby(["Crop", "Variety"]).sum(numeric_only=True).reset_index())
+    st.subheader("Harvested But Unprocessed")
+    harvest_summary = harvest_df.groupby(["Crop", "Variety", "Produce Type"])["Quantity"].sum().reset_index()
+    processed1_summary = processing1_df.groupby(["Crop", "Variety"])["Seed Cotton Quantity"].sum().reset_index()
+    processed2_summary = processing2_df.groupby(["Crop", "Variety"])["Raw Seed Quantity"].sum().reset_index()
+
+    st.subheader("Processed Outputs")
+    st.write("**Processing 1:**")
+    st.dataframe(processing1_df)
+    st.write("**Processing 2:**")
+    st.dataframe(processing2_df)
+
     st.subheader("Sales Summary")
-    st.dataframe(sales_df.groupby(["Crop", "Variety", "Product_Type"]).sum(numeric_only=True).reset_index())
+    st.dataframe(sales_df)
