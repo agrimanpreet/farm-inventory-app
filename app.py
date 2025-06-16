@@ -20,14 +20,17 @@ def load_sheet(sheet_name):
     except Exception:
         return pd.DataFrame()
 
-def save_to_sheet(sheet_name, data):
-    try:
-        worksheet = sheet.worksheet(sheet_name)
-    except:
-        worksheet = sheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+def save_to_sheet(sheet_name, new_data):
+    worksheet = sheet.worksheet(sheet_name)
     existing_data = worksheet.get_all_records()
-    updated_df = pd.DataFrame(existing_data + [data])
-    worksheet.clear()
+    existing_df = pd.DataFrame(existing_data)
+    
+    new_df = pd.DataFrame([new_data])
+    updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+
+    # 🔥 Clean and convert everything to safe string format
+    updated_df = updated_df.fillna("").astype(str)
+
     worksheet.update([updated_df.columns.values.tolist()] + updated_df.values.tolist())
 
 # Tabs
